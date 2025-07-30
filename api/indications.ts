@@ -41,9 +41,9 @@ const extractLocationDetails = (summary: string): { address: string; neighborhoo
     return { address, neighborhood };
 }
 
-async function scrapeUrl(url: string): Promise<LegislativeMatter[]> {
+async function fetchAndGetHtml(url: string): Promise<string> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15-second timeout
 
     try {
         const response = await fetch(url, {
@@ -57,48 +57,52 @@ async function scrapeUrl(url: string): Promise<LegislativeMatter[]> {
             throw new Error(`Falha ao buscar ${url}: ${response.status} ${response.statusText}`);
         }
 
-        const html = await response.text();
-        const $ = cheerio.load(html);
-        const matters: LegislativeMatter[] = [];
-
-        $('table.table tbody tr').each((i, elem) => {
-            const columns = $(elem).find('td');
-            if (columns.length > 3) {
-                const idText = $(columns[0]).find('a').text().trim();
-                if (!idText) return;
-
-                const pdfLink = $(columns[0]).find('a').attr('href') || '';
-                const summary = $(columns[1]).text().trim();
-                const author = $(columns[2]).text().trim();
-                const presentationDate = $(columns[3]).text().trim();
-                const protocolMatch = pdfLink.match(/protocolo=(\d+)/);
-                const protocol = protocolMatch ? protocolMatch[1] : 'N/A';
-                
-                const location = extractLocationDetails(summary);
-                
-                const matter: LegislativeMatter = {
-                    id: idText,
-                    summary: summary,
-                    author: author,
-                    presentationDate: presentationDate,
-                    category: getCategoryFromSummary(summary),
-                    location: location,
-                    status: 'Disponível no SAPL',
-                    protocol: protocol,
-                    pdfLink: pdfLink.startsWith('http') ? pdfLink : `https://sapl.camarabento.rs.gov.br${pdfLink}`,
-                };
-                matters.push(matter);
-            }
-        });
-        return matters;
+        return await response.text();
     } catch (error: any) {
         if (error.name === 'AbortError') {
-            throw new Error('Timeout: O portal da câmara demorou muito para responder.');
+            throw new Error(`Timeout: O portal da câmara (${url}) demorou muito para responder.`);
         }
         throw error;
     } finally {
         clearTimeout(timeoutId);
     }
+}
+
+
+function parseHtmlForMatters(html: string): LegislativeMatter[] {
+    const $ = cheerio.load(html);
+    const matters: LegislativeMatter[] = [];
+
+    $('table.table tbody tr').each((i, elem) => {
+        const columns = $(elem).find('td');
+        if (columns.length > 3) {
+            const idText = $(columns[0]).find('a').text().trim();
+            if (!idText) return;
+
+            const pdfLink = $(columns[0]).find('a').attr('href') || '';
+            const summary = $(columns[1]).text().trim();
+            const author = $(columns[2]).text().trim();
+            const presentationDate = $(columns[3]).text().trim();
+            const protocolMatch = pdfLink.match(/protocolo=(\d+)/);
+            const protocol = protocolMatch ? protocolMatch[1] : 'N/A';
+            
+            const location = extractLocationDetails(summary);
+            
+            const matter: LegislativeMatter = {
+                id: idText,
+                summary: summary,
+                author: author,
+                presentationDate: presentationDate,
+                category: getCategoryFromSummary(summary),
+                location: location,
+                status: 'Disponível no SAPL',
+                protocol: protocol,
+                pdfLink: pdfLink.startsWith('http') ? pdfLink : `https://sapl.camarabento.rs.gov.br${pdfLink}`,
+            };
+            matters.push(matter);
+        }
+    });
+    return matters;
 }
 
 // Helper robusto para extrair o número e ano do ID
@@ -129,18 +133,45 @@ export default async function handler(
   try {
     const currentYear = new Date().getFullYear();
     const baseUrl = 'https://sapl.camarabento.rs.gov.br/materia/pesquisar-materia';
-    const queryParams = `tipo=8&ementa=&numero=&numeracao__numero_materia=&numero_protocolo=&ano=${currentYear}&autoria__autor__tipo=&autoria__autor__parlamentar_set__filiacao__partido=&o=&tipo_listagem=1&tipo_origem_externa=&numero_origem_externa=&ano_origem_externa=&data_origem_externa_0=&data_origem_externa_1=&local_origem_externa=&data_apresentacao_0=&data_apresentacao_1=&data_publicacao_0=&data_publicacao_1=&relatoria__parlamentar_id=&em_tramitacao=&tramitacao__unidade_tramitacao_destino=&tramitacao__status=&materiaassunto__assunto=&indexacao=&regime_tramitacao=&salvar=Pesquisar`;
+    const queryParams = `tipo=8&ementa=&numero=&numeracao__numero_materia=&numero_protocolo=&ano=${currentYear}&autoria__autor__tipo=&autoria__autor__parlamentar_set__filiacao__partido=&o=&tipo_listagem=1&tipo_origem_externa=&numero_origem_externa=&ano_origem_externa=&data_origem_externa_0=&data_origem_externa_1=&data_apresentacao_0=&data_apresentacao_1=&data_publicacao_0=&data_publicacao_1=&relatoria__parlamentar_id=&em_tramitacao=&tramitacao__unidade_tramitacao_destino=&tramitacao__status=&materiaassunto__assunto=&indexacao=&regime_tramitacao=&salvar=Pesquisar`;
     
-    const urls = [
-        `${baseUrl}?${queryParams}`,
-        `${baseUrl}?page=2&${queryParams}`
-    ];
+    const firstPageUrl = `${baseUrl}?${queryParams}`;
+    const firstPageHtml = await fetchAndGetHtml(firstPageUrl);
+    const $ = cheerio.load(firstPageHtml);
 
-    const allMattersPromises = urls.map(scrapeUrl);
-    const results = await Promise.all(allMattersPromises);
-    const combinedMatters = results.flat();
+    let lastPage = 1;
+    $('ul.pagination a').each((i, elem) => {
+        const href = $(elem).attr('href');
+        if (href) {
+            const match = href.match(/page=(\d+)/);
+            if (match && match[1]) {
+                const pageNum = parseInt(match[1], 10);
+                if (pageNum > lastPage) {
+                    lastPage = pageNum;
+                }
+            }
+        }
+    });
 
-    const uniqueMatters = Array.from(new Map(combinedMatters.map(item => [item.id, item])).values());
+    const firstPageMatters = parseHtmlForMatters(firstPageHtml);
+    let allMatters = [...firstPageMatters];
+
+    if (lastPage > 1) {
+        const otherPageUrls: string[] = [];
+        for (let i = 2; i <= lastPage; i++) {
+            otherPageUrls.push(`${baseUrl}?page=${i}&${queryParams}`);
+        }
+        
+        const otherPagesPromises = otherPageUrls.map(async (url) => {
+            const html = await fetchAndGetHtml(url);
+            return parseHtmlForMatters(html);
+        });
+
+        const results = await Promise.all(otherPagesPromises);
+        allMatters.push(...results.flat());
+    }
+
+    const uniqueMatters = Array.from(new Map(allMatters.map(item => [item.id, item])).values());
      
     uniqueMatters.sort((a, b) => {
         const idA = parseId(a.id);
