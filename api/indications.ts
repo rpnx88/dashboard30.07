@@ -131,9 +131,9 @@ export default async function handler(
   res: VercelResponse
 ) {
   try {
-    const currentYear = new Date().getFullYear();
     const baseUrl = 'https://sapl.camarabento.rs.gov.br/materia/pesquisar-materia';
-    const queryParams = `tipo=8&ementa=&numero=&numeracao__numero_materia=&numero_protocolo=&ano=${currentYear}&autoria__autor__tipo=&autoria__autor__parlamentar_set__filiacao__partido=&o=&tipo_listagem=1&tipo_origem_externa=&numero_origem_externa=&ano_origem_externa=&data_origem_externa_0=&data_origem_externa_1=&data_apresentacao_0=&data_apresentacao_1=&data_publicacao_0=&data_publicacao_1=&relatoria__parlamentar_id=&em_tramitacao=&tramitacao__unidade_tramitacao_destino=&tramitacao__status=&materiaassunto__assunto=&indexacao=&regime_tramitacao=&salvar=Pesquisar`;
+    // Parâmetros de busca atualizados para filtrar por autor específico (400) e ano (2025).
+    const queryParams = `tipo=8&ementa=&numero=&numeracao__numero_materia=&numero_protocolo=&ano=2025&autoria__autor=400&autoria__primeiro_autor=unknown&autoria__autor__tipo=&autoria__autor__parlamentar_set__filiacao__partido=&o=&tipo_listagem=1&tipo_origem_externa=&numero_origem_externa=&ano_origem_externa=&data_origem_externa_0=&data_origem_externa_1=&local_origem_externa=&data_apresentacao_0=&data_apresentacao_1=&data_publicacao_0=&data_publicacao_1=&relatoria__parlamentar_id=&em_tramitacao=&tramitacao__unidade_tramitacao_destino=&tramitacao__status=&materiaassunto__assunto=&indexacao=&regime_tramitacao=&salvar=Pesquisar`;
     
     const firstPageUrl = `${baseUrl}?${queryParams}`;
     const firstPageHtml = await fetchAndGetHtml(firstPageUrl);
